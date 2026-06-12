@@ -1,0 +1,131 @@
+{
+  "timestamp": "2026-06-13 03:15:52",
+  "summary": {
+    "total_files": 1,
+    "success": 1,
+    "skipped": 0,
+    "error": 0,
+    "total_original_size": 117,
+    "total_compressed_size": 160,
+    "total_saved": -43,
+    "total_time_elapsed": 0.053000450134277344,
+    "overall_ratio": 1.3675,
+    "recompress_reasons": {
+      "config_changed": 0,
+      "source_changed": 0,
+      "output_missing": 0
+    }
+  },
+  "by_strategy": {
+    "icon": {
+      "count": 1,
+      "success": 1,
+      "skipped": 0,
+      "error": 0,
+      "original_size": 117,
+      "compressed_size": 160,
+      "max_time": 0.053000450134277344,
+      "slowest_file": "D:\\code\\TraeProjects\\1253\\single_assets\\icons\\single_icon.png",
+      "errors": [],
+      "saved": -43,
+      "ratio": 1.3675213675213675
+    }
+  },
+  "slowest_files": [
+    {
+      "file": "D:\\code\\TraeProjects\\1253\\single_assets\\icons\\single_icon.png",
+      "strategy": "icon",
+      "time_elapsed": 0.053
+    }
+  ],
+  "errors": [],
+  "strategies_used": [
+    {
+      "name": "icon",
+      "description": "UI图标类图片 - 转为WebP保持清晰度",
+      "path_pattern": "(icon|btn|button|logo|badge|avatar|tab|nav|menu|toolbar|icon_)",
+      "max_dimension": 64,
+      "min_dimension": null,
+      "format": "webp",
+      "quality": 95,
+      "method": 6,
+      "target_ratio": null,
+      "quality_start": null,
+      "quality_min": 50,
+      "preserve_exif": false,
+      "signature": "c1bec57204172f18"
+    },
+    {
+      "name": "photo",
+      "description": "照片类图片 - 高效压缩到原体积70%保留EXIF",
+      "path_pattern": "(photo|img|image|pic|picture|gallery|photo_)",
+      "max_dimension": null,
+      "min_dimension": 64,
+      "format": "original",
+      "quality": 85,
+      "method": 4,
+      "target_ratio": 0.7,
+      "quality_start": 85,
+      "quality_min": 50,
+      "preserve_exif": true,
+      "signature": "0e4b734cdf868301"
+    },
+    {
+      "name": "auto_small",
+      "description": "自动识别的小尺寸图片 - 转WebP",
+      "path_pattern": null,
+      "max_dimension": 64,
+      "min_dimension": null,
+      "format": "webp",
+      "quality": 95,
+      "method": 6,
+      "target_ratio": null,
+      "quality_start": null,
+      "quality_min": 50,
+      "preserve_exif": false,
+      "signature": "68902dfb18f74a52"
+    },
+    {
+      "name": "auto_large",
+      "description": "自动识别的大尺寸图片 - 压缩保留EXIF",
+      "path_pattern": null,
+      "max_dimension": null,
+      "min_dimension": 64,
+      "format": "original",
+      "quality": 85,
+      "method": 4,
+      "target_ratio": 0.7,
+      "quality_start": 85,
+      "quality_min": 50,
+      "preserve_exif": true,
+      "signature": "7718e338c930fc9d"
+    }
+  ],
+  "details": [
+    {
+      "file": "D:\\code\\TraeProjects\\1253\\single_assets\\icons\\single_icon.png",
+      "output": "dist\\icons\\single_icon.webp",
+      "backup": null,
+      "strategy": "icon",
+      "original_size": 117,
+      "compressed_size": 160,
+      "original_dimensions": [
+        32,
+        32
+      ],
+      "compressed_dimensions": [
+        32,
+        32
+      ],
+      "compression_ratio": 1.3675,
+      "time_elapsed": 0.053,
+      "status": "success",
+      "original_mtime": 1781291752.417871,
+      "output_mtime": 1781291752.8703735,
+      "file_hash": "2fd389e295ea28fd937d0027bdd68b862a4e0d1bd264a532a620e04b0a5c4884",
+      "strategy_signature": "c1bec57204172f18",
+      "recompress_reason": null,
+      "error": null
+    }
+  ]
+}

@@ -42,10 +42,41 @@ EXIT_OK = 0
 EXIT_ALL_FAILED = 1
 EXIT_REPORT_WRITE_FAILED = 2
 EXIT_INVALID_ARGS = 3
+EXIT_BUDGET_EXCEEDED = 4
+EXIT_REFERENCE_VALIDATION_FAILED = 5
 
 
 CACHE_VERSION = 2
 MIN_SUFFIX = ".min"
+
+
+@dataclass
+class EntryConfig:
+    """多入口配置：每个入口对应一组源目录、输出目录、manifest"""
+    name: str
+    source_root: str
+    output_dir: Optional[str] = None
+    manifest_path: Optional[str] = None
+    report_prefix: Optional[str] = None
+
+
+@dataclass
+class BudgetRule:
+    """体积预算规则：按目录前缀或策略名设置压缩后总体积上限"""
+    name: str
+    max_bytes: int
+    scope_type: str = "directory"  # directory | strategy
+    scope_value: str = ""  # 目录相对前缀 或 策略名
+
+
+@dataclass
+class ReferenceIssue:
+    """引用校验发现的问题"""
+    file_path: str
+    issue_type: str  # stale_source | broken_link | external (external仅统计不报错)
+    raw_path: str
+    resolved_path: Optional[str] = None
+    details: str = ""
 
 
 @dataclass
@@ -1403,13 +1434,296 @@ def print_replace_summary(summary: dict, preview: bool):
             print()
 
 
-def compute_exit_code(results: list, report_write_errors: list) -> int:
+def find_all_image_references(content: str) -> list:
+    """从文本中提取所有图片路径引用（HTML img src、CSS url()、引号包裹路径）"""
+    refs = []
+    pattern = re.compile(
+        r"""(?:(['"])([^'"]+\.(?:png|jpg|jpeg|webp|gif|bmp|tiff?|svg))\1)"""
+        r"""|(?:url\(\s*)(['"]?)([^'")]+\.(?:png|jpg|jpeg|webp|gif|bmp|tiff?|svg))\3(\s*\))""",
+        re.IGNORECASE,
+    )
+    for m in pattern.finditer(content):
+        if m.group(1):
+            raw = m.group(2)
+        else:
+            raw = m.group(4)
+        refs.append(raw)
+    return refs
+
+
+def validate_references(manifest_path: str, target_paths: list,
+                         source_roots: Optional[list] = None) -> dict:
     """
-    计算 CI 退出码：
-      0 - 有成功/跳过文件（哪怕有部分失败）
-      1 - 全部失败（results 非空全 error 或 images 非空全失败）
-      2 - 报告/manifest 写入失败（影响流水线）
+    校验 HTML/CSS/JS 中图片引用：
+    - stale_source: 仍指向源图目录（manifest 里存在这个源路径，说明没替换）
+    - broken_link:  指向的文件磁盘上不存在
+    返回 {issues, summary}
     """
+    manifest = load_manifest(manifest_path)
+    if not manifest:
+        return {"error": f"manifest 文件不存在或无法读取: {manifest_path}",
+                "issues": [], "summary": {}}
+
+    mapping = manifest.get("source_to_output", {})
+    src_root = manifest.get("source_root", "")
+    out_root = manifest.get("output_root")
+    all_source_keys = set(mapping.keys())
+
+    if source_roots is None:
+        source_roots = [src_root] if src_root else []
+    source_roots_abs = [os.path.abspath(r) for r in source_roots if r]
+
+    text_files = scan_text_files(target_paths)
+    issues = []
+    total_refs = 0
+    external_count = 0
+
+    for tf in text_files:
+        try:
+            with open(tf, "r", encoding="utf-8") as f:
+                content = f.read()
+        except (IOError, UnicodeDecodeError) as e:
+            issues.append(ReferenceIssue(
+                file_path=tf, issue_type="read_error", raw_path="",
+                details=f"读取失败: {e}",
+            ))
+            continue
+
+        refs = find_all_image_references(content)
+        text_dir_abs = os.path.abspath(os.path.dirname(tf))
+
+        for raw in refs:
+            total_refs += 1
+
+            if raw.startswith(("data:", "#", "http://", "https://")):
+                external_count += 1
+                continue
+
+            candidates = [raw]
+            norm = raw.replace("\\", "/")
+            stripped = re.sub(r"^(\.\./)+", "", norm)
+            if stripped != norm:
+                candidates.append(stripped)
+
+            is_stale = False
+            for cand in candidates:
+                if cand in all_source_keys:
+                    is_stale = True
+                    break
+                for sra in source_roots_abs:
+                    try:
+                        abs_p = os.path.abspath(os.path.join(text_dir_abs, raw))
+                        rel = os.path.relpath(abs_p, sra).replace("\\", "/")
+                        if not rel.startswith("..") and rel in all_source_keys:
+                            is_stale = True
+                            break
+                    except ValueError:
+                        pass
+                if is_stale:
+                    break
+
+            if is_stale:
+                issues.append(ReferenceIssue(
+                    file_path=tf, issue_type="stale_source", raw_path=raw,
+                    details="路径仍指向源图目录（应替换为压缩产物）",
+                ))
+                continue
+
+            resolved = None
+            try:
+                resolved = os.path.abspath(os.path.join(text_dir_abs, raw))
+            except ValueError:
+                pass
+
+            if resolved and not os.path.isfile(resolved):
+                issues.append(ReferenceIssue(
+                    file_path=tf, issue_type="broken_link", raw_path=raw,
+                    resolved_path=resolved,
+                    details=f"解析为绝对路径后不存在: {resolved}",
+                ))
+
+    stale_count = sum(1 for i in issues if i.issue_type == "stale_source")
+    broken_count = sum(1 for i in issues if i.issue_type == "broken_link")
+    read_errors = sum(1 for i in issues if i.issue_type == "read_error")
+
+    summary = {
+        "files_scanned": len(text_files),
+        "total_refs": total_refs,
+        "external_refs": external_count,
+        "stale_source_refs": stale_count,
+        "broken_links": broken_count,
+        "read_errors": read_errors,
+        "passed": stale_count == 0 and broken_count == 0,
+    }
+    return {"issues": issues, "summary": summary}
+
+
+def print_validate_summary(result: dict):
+    if "error" in result:
+        print(f"\n[引用校验] 错误: {result['error']}")
+        return
+    s = result["summary"]
+    issues = result["issues"]
+    tag = "通过" if s["passed"] else "失败"
+    print(f"\n[引用校验 {tag}] 扫描 {s['files_scanned']} 个文件，"
+          f"共 {s['total_refs']} 处引用（外部 {s['external_refs']}）")
+    print(f"  未替换旧路径(stale): {s['stale_source_refs']} | "
+          f"断链(broken_link): {s['broken_links']} | 读取失败: {s['read_errors']}")
+    for iss in issues[:20]:
+        if iss.issue_type == "read_error":
+            print(f"  [读取失败] {iss.file_path}: {iss.details}")
+        elif iss.issue_type == "stale_source":
+            print(f"  [未替换] {iss.file_path}: '{iss.raw_path}'  {iss.details}")
+        elif iss.issue_type == "broken_link":
+            print(f"  [断链] {iss.file_path}: '{iss.raw_path}' -> {iss.resolved_path}")
+    if len(issues) > 20:
+        print(f"  ... 其余 {len(issues) - 20} 条已省略")
+
+
+def parse_budgets(config: dict) -> list:
+    """从配置中解析体积预算规则"""
+    budgets = []
+    raw_list = config.get("budgets", [])
+    for rb in raw_list:
+        name = rb.get("name", "unnamed")
+        if "max_bytes" in rb:
+            raw_val = rb["max_bytes"]
+        elif "max_kb" in rb:
+            raw_val = str(rb["max_kb"]) + "KB"
+        elif "max_mb" in rb:
+            raw_val = str(rb["max_mb"]) + "MB"
+        else:
+            raw_val = 0
+        max_bytes_str = str(raw_val)
+        m = re.match(r"^\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb|b)?\s*$", max_bytes_str, re.IGNORECASE)
+        if m:
+            num = float(m.group(1))
+            unit = (m.group(2) or "b").lower()
+            mult = {"b": 1, "kb": 1024, "mb": 1024 * 1024, "gb": 1024 ** 3}.get(unit, 1)
+            max_bytes = int(num * mult)
+        else:
+            max_bytes = int(raw_val) if isinstance(raw_val, (int, float)) else 0
+        scope_type = rb.get("scope", "directory")
+        scope_value = rb.get("value", rb.get("directory", rb.get("strategy", "")))
+        budgets.append(BudgetRule(
+            name=name, max_bytes=max_bytes,
+            scope_type=scope_type, scope_value=scope_value,
+        ))
+    return budgets
+
+
+def check_budgets(results: list, budgets: list,
+                  source_root: str) -> dict:
+    """检查是否超出体积预算，返回 {passed, violations[], per_scope_bytes}"""
+    source_root_abs = os.path.abspath(source_root)
+    by_directory = {}
+    by_strategy = {}
+
+    for r in results:
+        if r.status == "error":
+            continue
+        size = r.compressed_size or 0
+        try:
+            rel = os.path.relpath(os.path.abspath(r.file_path), source_root_abs).replace("\\", "/")
+        except ValueError:
+            rel = os.path.basename(r.file_path)
+        parts = rel.split("/")
+        for depth in range(1, len(parts) + 1):
+            prefix = "/".join(parts[:depth])
+            by_directory[prefix] = by_directory.get(prefix, 0) + size
+        by_directory[""] = by_directory.get("", 0) + size
+        by_strategy[r.strategy_name] = by_strategy.get(r.strategy_name, 0) + size
+
+    violations = []
+    for b in budgets:
+        if b.scope_type == "strategy":
+            actual = by_strategy.get(b.scope_value, 0)
+            if b.max_bytes > 0 and actual > b.max_bytes:
+                violations.append({
+                    "budget": b.name, "scope_type": "strategy",
+                    "scope_value": b.scope_value,
+                    "max_bytes": b.max_bytes, "actual_bytes": actual,
+                    "over_bytes": actual - b.max_bytes,
+                })
+        else:
+            sv = b.scope_value.rstrip("/").replace("\\", "/")
+            actual = by_directory.get(sv, 0)
+            if b.max_bytes > 0 and actual > b.max_bytes:
+                violations.append({
+                    "budget": b.name, "scope_type": "directory",
+                    "scope_value": sv or "(全部)",
+                    "max_bytes": b.max_bytes, "actual_bytes": actual,
+                    "over_bytes": actual - b.max_bytes,
+                })
+
+    return {
+        "passed": len(violations) == 0,
+        "violations": violations,
+        "per_directory_bytes": by_directory,
+        "per_strategy_bytes": by_strategy,
+        "total_budgets": len(budgets),
+    }
+
+
+def print_budget_summary(check_result: dict):
+    if check_result["total_budgets"] == 0:
+        return
+    tag = "通过" if check_result["passed"] else "超标"
+    print(f"\n[体积预算 {tag}] {check_result['total_budgets']} 条规则，"
+          f"{len(check_result['violations'])} 条超标")
+    for v in check_result["violations"]:
+        over_ratio = v["over_bytes"] / v["max_bytes"] if v["max_bytes"] else 0
+        print(f"  [超标] {v['budget']} ({v['scope_type']}={v['scope_value']}): "
+              f"{format_size(v['actual_bytes'])} > 上限 {format_size(v['max_bytes'])} "
+              f"(超出 {format_size(v['over_bytes'])}, +{over_ratio:.1%})")
+
+
+def parse_entries(config: dict, cli_entry: Optional[str] = None,
+                  cli_source: Optional[str] = None,
+                  cli_output: Optional[str] = None,
+                  cli_manifest: Optional[str] = None) -> list:
+    """
+    解析多入口配置：
+    优先 CLI 参数（单入口），否则使用 config.entries，最后退回 CLI source 参数
+    """
+    entries = []
+    raw_entries = config.get("entries", [])
+
+    if cli_source:
+        single = EntryConfig(
+            name=cli_entry or "default",
+            source_root=cli_source,
+            output_dir=cli_output,
+            manifest_path=cli_manifest,
+        )
+        entries.append(single)
+    elif raw_entries:
+        for re_ in raw_entries:
+            entries.append(EntryConfig(
+                name=re_.get("name", "unnamed"),
+                source_root=re_["source"],
+                output_dir=re_.get("output"),
+                manifest_path=re_.get("manifest"),
+                report_prefix=re_.get("report_prefix"),
+            ))
+    return entries
+
+
+def compute_exit_code(results: list, report_write_errors: list,
+                       budget_violations: int = 0,
+                       reference_issues: int = 0) -> int:
+    """
+    计算 CI 退出码（优先级从高到低）：
+      5 - 引用校验失败（有未替换旧路径或断链）
+      4 - 体积预算超标
+      2 - 报告/manifest 写入失败
+      1 - 全部图片失败
+      0 - 其他情况（有成功/跳过，哪怕部分失败）
+    """
+    if reference_issues > 0:
+        return EXIT_REFERENCE_VALIDATION_FAILED
+    if budget_violations > 0:
+        return EXIT_BUDGET_EXCEEDED
     if report_write_errors:
         return EXIT_REPORT_WRITE_FAILED
     if not results:
@@ -1658,6 +1972,7 @@ def watch_and_compress(source_root: str, strategies: list, config: dict,
             if all_results:
                 print_report(all_results)
 
+            manifest_path = None
             if args_namespace.manifest:
                 manifest_path_arg = None if args_namespace.manifest == "__DEFAULT__" else args_namespace.manifest
                 manifest_path = get_manifest_path(config, output_dir, manifest_path_arg)
@@ -1688,9 +2003,51 @@ def watch_and_compress(source_root: str, strategies: list, config: dict,
                         ))
                 try:
                     save_manifest(manifest_results, manifest_path, abs_source_root, output_dir)
-                    print(f"Manifest: {os.path.abspath(manifest_path)}")
                 except Exception as e:
-                    print(f"[警告] Manifest 更新失败: {e}")
+                    manifest_path = None
+                    print(f"  [警告] Manifest 更新失败: {e}")
+
+            auto_refresh_paths = getattr(args_namespace, "watch_refresh", None) or []
+            changed_ref_files = []
+            if manifest_path and auto_refresh_paths:
+                refresh_summary = replace_references_in_files(
+                    manifest_path, auto_refresh_paths, preview=False
+                )
+                if "error" not in refresh_summary and "warning" not in refresh_summary:
+                    changed_ref_files = [
+                        e["file"] for e in refresh_summary.get("files", [])
+                        if e.get("replacements", 0) > 0
+                    ]
+
+            imgs_changed = []
+            for r in all_results:
+                try:
+                    rel = os.path.relpath(r.file_path, abs_source_root).replace("\\", "/")
+                except ValueError:
+                    rel = os.path.basename(r.file_path)
+                status_tag = "OK" if r.status == "success" else ("SKIP" if r.status == "skipped" else "ERR")
+                size_info = f"{format_size(r.original_size)}->{format_size(r.compressed_size)}" if r.status != "error" else "error"
+                imgs_changed.append(f"{rel}({status_tag},{size_info})")
+            for dp in deleted_paths:
+                try:
+                    rel = os.path.relpath(dp, abs_source_root).replace("\\", "/")
+                except ValueError:
+                    rel = os.path.basename(dp)
+                imgs_changed.append(f"{rel}(DEL)")
+
+            print("\n" + "-" * 60)
+            print(f"[本轮变更] 图片 {len(imgs_changed)} 个 | 引用刷新 {len(changed_ref_files)} 个文件")
+            if imgs_changed:
+                print(f"  图片: " + ", ".join(imgs_changed[:8]) + (" ..." if len(imgs_changed) > 8 else ""))
+            if changed_ref_files:
+                rel_refs = []
+                for rf in changed_ref_files[:5]:
+                    try:
+                        rel_refs.append(os.path.relpath(rf).replace("\\", "/"))
+                    except ValueError:
+                        rel_refs.append(os.path.basename(rf))
+                print(f"  引用: " + ", ".join(rel_refs) + (" ..." if len(changed_ref_files) > 5 else ""))
+            print("-" * 60)
 
     except KeyboardInterrupt:
         print("\n[监听停止] (Ctrl+C)")
@@ -1745,7 +2102,10 @@ def main():
   python img_compress.py ./assets -o dist-images --no-clean
         """,
     )
-    parser.add_argument("directory", help="要扫描的图片源目录")
+    parser.add_argument("directory", nargs="?", default=None,
+                        help="要扫描的图片源目录（CLI 单入口模式）；配置里有 entries 时可不传")
+    parser.add_argument("--entry", default=None,
+                        help="多入口模式下指定只跑某个入口名")
     parser.add_argument("-c", "--config", default="compress_config.yaml",
                         help="配置文件路径 (默认: compress_config.yaml)")
     parser.add_argument("-o", "--output-dir", default=None,
@@ -1770,8 +2130,12 @@ def main():
                         help="根据 manifest 替换指定目录/文件中的 HTML/CSS/JS 图片路径 (写回文件)")
     parser.add_argument("--replace-preview", nargs="+", default=None, metavar="PATH",
                         help="根据 manifest 预览路径替换的差异 (不写回文件，只打印 diff)")
+    parser.add_argument("--validate", nargs="+", default=None, metavar="PATH",
+                        help="引用校验：检查 HTML/CSS/JS 中是否还有未替换旧路径、是否有断链")
     parser.add_argument("--watch", action="store_true",
                         help="watch 模式：监听源目录图片变化，自动压缩并更新 manifest")
+    parser.add_argument("--watch-refresh", nargs="+", default=None, metavar="PATH",
+                        help="watch 模式下自动刷新这些目录/文件中的 HTML/CSS/JS 图片引用")
     parser.add_argument("--workers", type=int, default=None,
                         help="并行工作进程数 (默认: 配置文件中的 workers 或 CPU核心数)")
     parser.add_argument("--report", default=None,
@@ -1786,10 +2150,9 @@ def main():
                         help="清除现有缓存后再运行")
     parser.add_argument("--dry-run", action="store_true",
                         help="只扫描和匹配策略，不实际压缩")
+    parser.add_argument("--budget-strict", action="store_true",
+                        help="体积预算超标时返回非 0 退出码（默认仅告警）")
     args = parser.parse_args()
-
-    if not os.path.isdir(args.directory):
-        sys.exit(f"错误: 源目录不存在 - {args.directory}")
 
     config_path = args.config
     if not os.path.isfile(config_path):
@@ -1802,240 +2165,383 @@ def main():
     print(f"加载配置文件: {config_path}")
     config = load_config(config_path)
     strategies = parse_strategies(config)
+    budgets = parse_budgets(config)
     general = config.get("general", {})
 
-    supported_ext = general.get("supported_extensions", [".png", ".jpg", ".jpeg"])
-    backup_dir = args.backup_dir or general.get("backup_dir", "_backup")
-    report_file = args.report or general.get("report_file", "compression_report.json")
-    workers = args.workers or general.get("workers", 0) or os.cpu_count() or 4
-    cache_path = get_cache_path(config, args.output_dir)
-    enable_cache = not args.no_cache
-    enable_clean = args.clean or (not args.no_clean and args.output_dir is not None)
-
-    source_root = os.path.abspath(args.directory)
-
-    if args.watch:
-        watch_and_compress(source_root, strategies, config, args)
-        return
-
-    print(f"扫描目录: {source_root}")
-    print(f"支持的格式: {', '.join(supported_ext)}")
-
-    images = scan_images(
-        source_root, supported_ext,
-        skip_own_output=True,
-        source_root=source_root,
-        output_dir=args.output_dir,
-        no_in_place=args.no_in_place,
+    entries = parse_entries(
+        config, cli_entry=args.entry, cli_source=args.directory,
+        cli_output=args.output_dir,
+        cli_manifest=(None if args.manifest == "__DEFAULT__" else args.manifest)
+        if args.manifest else None,
     )
-    print(f"找到 {len(images)} 张图片 (已跳过自身生成的产物)")
 
-    results = []
-    report_write_errors = []
+    if not entries:
+        sys.exit("错误: 未找到源目录。请用位置参数指定目录，或在配置里写 entries")
 
-    if not images:
-        print("没有找到可处理的图片")
-        if args.output_dir and enable_clean:
-            print("\n执行过期产物清理...")
-            cache = load_cache(cache_path) if enable_cache else {
-                "version": CACHE_VERSION, "files": {}
-            }
-            cache = clean_stale_products(
-                source_root, args.output_dir, [], cache, supported_ext
-            )
-            if enable_cache:
-                save_cache(cache_path, cache)
-    else:
-        if args.output_dir:
-            abs_output = os.path.abspath(args.output_dir)
-            print(f"输出目录: {abs_output}")
+    if args.entry:
+        entries = [e for e in entries if e.name == args.entry]
+        if not entries:
+            sys.exit(f"错误: 入口 '{args.entry}' 未在配置中找到")
 
-        print(f"压缩策略: {', '.join(s.name for s in strategies)}")
-        print(f"并行进程数: {workers}")
-        print(f"增量缓存: {'已启用' if enable_cache else '已禁用'} ({cache_path})")
-        print(f"过期清理: {'已启用' if enable_clean else '已禁用'}")
+    if args.watch and len(entries) > 1:
+        sys.exit("错误: --watch 模式暂不支持多入口，请使用 --entry 指定一个入口")
 
-        if args.backup:
-            print(f"备份目录: {os.path.abspath(backup_dir)}")
+    def process_single_entry(entry: EntryConfig) -> dict:
+        """处理单个入口（源目录 + 输出目录 + manifest），返回处理结果汇总"""
+        supported_ext = general.get("supported_extensions", [".png", ".jpg", ".jpeg"])
+        backup_dir = args.backup_dir or general.get("backup_dir", "_backup")
+        workers = args.workers or general.get("workers", 0) or os.cpu_count() or 4
+        entry_output = entry.output_dir or args.output_dir
+        cache_path = get_cache_path(config, entry_output)
+        enable_cache = not args.no_cache
+        enable_clean = (args.clean or
+                        (not args.no_clean and entry_output is not None))
+        entry_manifest_arg = (
+            entry.manifest_path
+            or (None if args.manifest == "__DEFAULT__" else args.manifest)
+            if args.manifest else None
+        )
+        entry_report_prefix = entry.report_prefix or f"{entry.name}_"
 
-        if args.no_in_place:
-            print("模式: --no-in-place (完全不碰原文件，自动跳过 .min 产物)")
-        elif args.keep_source:
-            print("模式: 原地压缩 + 保留源文件")
-        else:
-            print("模式: 原地压缩 (转 WebP 后删除源文件)")
+        if entry.name != "default" or len(entries) > 1:
+            print(f"\n{'=' * 72}")
+            print(f"  [入口] {entry.name}  源: {entry.source_root}"
+                  + (f"  输出: {entry_output}" if entry_output else ""))
+            print(f"{'=' * 72}")
 
-        if args.clear_cache and enable_cache:
-            if os.path.isfile(cache_path):
-                os.remove(cache_path)
-                print(f"已清除缓存: {cache_path}")
+        if not os.path.isdir(entry.source_root):
+            print(f"[跳过] 入口 {entry.name}: 源目录不存在 {entry.source_root}")
+            return {"entry": entry.name, "results": [],
+                    "report_write_errors": [f"源目录不存在: {entry.source_root}"],
+                    "manifest_path": None, "source_root": entry.source_root,
+                    "output_dir": entry_output}
 
-        if args.dry_run:
-            print("\n[试运行模式] 策略匹配预览:")
-            print("-" * 120)
-            for img_path in images:
-                try:
-                    with Image.open(img_path) as img:
-                        w, h = img.size
-                    strategy = resolve_strategy(img_path, w, h, strategies)
-                    original_ext = os.path.splitext(img_path)[1].lower()
-                    in_place = (
-                        args.in_place
-                        and not args.no_in_place
-                        and not args.output_dir
-                    )
-                    output_path = compute_output_path(
-                        img_path, source_root, args.output_dir,
-                        in_place, args.no_in_place, strategy, original_ext
-                    )
-                    print(
-                        f"  {img_path:<55} {w}x{h:<8} "
-                        f"-> {strategy.name:<12} -> {output_path}"
-                    )
-                except Exception as e:
-                    print(f"  {img_path:<55} [错误: {e}]")
-        else:
-            if args.clear_cache and enable_cache:
-                cache = {"version": CACHE_VERSION, "files": {}}
-            elif enable_cache:
-                cache = load_cache(cache_path)
-            else:
-                cache = {"version": CACHE_VERSION, "files": {}}
+        source_root_abs = os.path.abspath(entry.source_root)
 
-            strategies_data = [strategy_to_dict(s) for s in strategies]
-            in_place = (
-                args.in_place
-                and not args.no_in_place
-                and not args.output_dir
-            )
+        if args.watch:
+            watch_and_compress(source_root_abs, strategies, config, args)
+            return {"entry": entry.name, "results": [], "report_write_errors": [],
+                    "manifest_path": None, "source_root": source_root_abs,
+                    "output_dir": entry_output}
 
-            task_args = [
-                (img_path, source_root, strategies_data, args.output_dir,
-                 backup_dir if args.backup else None, in_place, args.no_in_place,
-                 args.keep_source, cache_path, enable_cache)
-                for img_path in images
-            ]
+        print(f"扫描目录: {source_root_abs}")
+        print(f"支持的格式: {', '.join(supported_ext)}")
 
-            print(f"\n开始压缩 ({workers} 个进程)...")
+        images = scan_images(
+            source_root_abs, supported_ext,
+            skip_own_output=True,
+            source_root=source_root_abs,
+            output_dir=entry_output,
+            no_in_place=args.no_in_place,
+        )
+        print(f"找到 {len(images)} 张图片 (已跳过自身生成的产物)")
 
-            with ProcessPoolExecutor(max_workers=workers) as executor:
-                futures = {
-                    executor.submit(process_file_wrapper, arg): arg[0]
-                    for arg in task_args
+        results = []
+        report_write_errors = []
+
+        if not images:
+            print("没有找到可处理的图片")
+            if entry_output and enable_clean:
+                print("\n执行过期产物清理...")
+                cache = load_cache(cache_path) if enable_cache else {
+                    "version": CACHE_VERSION, "files": {}
                 }
-                completed = 0
-                total = len(futures)
-                for future in as_completed(futures):
-                    file_path = futures[future]
-                    try:
-                        result = future.result()
-                        results.append(result)
-                    except Exception as e:
-                        results.append(CompressionResult(
-                            file_path=file_path,
-                            output_path="",
-                            strategy_name="error",
-                            original_size=0,
-                            compressed_size=0,
-                            original_dimensions=(0, 0),
-                            compressed_dimensions=(0, 0),
-                            compression_ratio=1.0,
-                            time_elapsed=0,
-                            status="error",
-                            original_mtime=0,
-                            error=str(e),
-                        ))
-                    completed += 1
-                    if completed % 10 == 0 or completed == total:
-                        print(f"  进度: {completed}/{total} ({completed / total:.0%})")
-
-            results.sort(key=lambda r: r.file_path)
-
-            if enable_cache:
-                for r in results:
-                    if r.status == "success" and r.file_hash:
-                        cache["files"][r.file_path] = {
-                            "strategy": r.strategy_name,
-                            "file_hash": r.file_hash,
-                            "original_size": r.original_size,
-                            "compressed_size": r.compressed_size,
-                            "compression_ratio": r.compression_ratio,
-                            "strategy_signature": r.strategy_signature,
-                            "output_path": r.output_path,
-                            "timestamp": time.time(),
-                        }
-                    elif r.status == "skipped" and r.file_hash:
-                        if r.file_path in cache["files"]:
-                            cache["files"][r.file_path]["timestamp"] = time.time()
-
-            if enable_clean and args.output_dir:
-                print("\n清理过期产物...")
                 cache = clean_stale_products(
-                    source_root, args.output_dir, images, cache, supported_ext
+                    source_root_abs, entry_output, [], cache, supported_ext
+                )
+                if enable_cache:
+                    save_cache(cache_path, cache)
+        else:
+            if entry_output:
+                print(f"输出目录: {os.path.abspath(entry_output)}")
+
+            print(f"压缩策略: {', '.join(s.name for s in strategies)}")
+            print(f"并行进程数: {workers}")
+            print(f"增量缓存: {'已启用' if enable_cache else '已禁用'} ({cache_path})")
+            print(f"过期清理: {'已启用' if enable_clean else '已禁用'}")
+
+            if args.backup:
+                print(f"备份目录: {os.path.abspath(backup_dir)}")
+
+            if args.no_in_place:
+                print("模式: --no-in-place (完全不碰原文件，自动跳过 .min 产物)")
+            elif args.keep_source:
+                print("模式: 原地压缩 + 保留源文件")
+            else:
+                print("模式: 原地压缩 (转 WebP 后删除源文件)")
+
+            if args.clear_cache and enable_cache:
+                if os.path.isfile(cache_path):
+                    os.remove(cache_path)
+                    print(f"已清除缓存: {cache_path}")
+
+            if args.dry_run:
+                print("\n[试运行模式] 策略匹配预览:")
+                print("-" * 120)
+                for img_path in images:
+                    try:
+                        with Image.open(img_path) as img:
+                            w, h = img.size
+                        strategy = resolve_strategy(img_path, w, h, strategies)
+                        original_ext = os.path.splitext(img_path)[1].lower()
+                        in_place = (
+                            args.in_place
+                            and not args.no_in_place
+                            and not entry_output
+                        )
+                        output_path = compute_output_path(
+                            img_path, source_root_abs, entry_output,
+                            in_place, args.no_in_place, strategy, original_ext
+                        )
+                        print(
+                            f"  {img_path:<55} {w}x{h:<8} "
+                            f"-> {strategy.name:<12} -> {output_path}"
+                        )
+                    except Exception as e:
+                        print(f"  {img_path:<55} [错误: {e}]")
+            else:
+                if args.clear_cache and enable_cache:
+                    cache = {"version": CACHE_VERSION, "files": {}}
+                elif enable_cache:
+                    cache = load_cache(cache_path)
+                else:
+                    cache = {"version": CACHE_VERSION, "files": {}}
+
+                strategies_data = [strategy_to_dict(s) for s in strategies]
+                in_place = (
+                    args.in_place
+                    and not args.no_in_place
+                    and not entry_output
                 )
 
-            if enable_cache:
-                save_cache(cache_path, cache)
+                task_args = [
+                    (img_path, source_root_abs, strategies_data, entry_output,
+                     backup_dir if args.backup else None, in_place, args.no_in_place,
+                     args.keep_source, cache_path, enable_cache)
+                    for img_path in images
+                ]
 
-            print_report(results)
+                print(f"\n开始压缩 ({workers} 个进程)...")
 
-    try:
-        save_json_report(results, report_file, strategies)
-        print(f"\nJSON 报告: {os.path.abspath(report_file)}")
-    except Exception as e:
-        print(f"\n[警告] JSON 报告导出失败: {e}")
-        report_write_errors.append(f"JSON报告: {e}")
+                with ProcessPoolExecutor(max_workers=workers) as executor:
+                    futures = {
+                        executor.submit(process_file_wrapper, arg): arg[0]
+                        for arg in task_args
+                    }
+                    completed = 0
+                    total = len(futures)
+                    for future in as_completed(futures):
+                        file_path = futures[future]
+                        try:
+                            result = future.result()
+                            results.append(result)
+                        except Exception as e:
+                            results.append(CompressionResult(
+                                file_path=file_path,
+                                output_path="",
+                                strategy_name="error",
+                                original_size=0,
+                                compressed_size=0,
+                                original_dimensions=(0, 0),
+                                compressed_dimensions=(0, 0),
+                                compression_ratio=1.0,
+                                time_elapsed=0,
+                                status="error",
+                                original_mtime=0,
+                                error=str(e),
+                            ))
+                        completed += 1
+                        if completed % 10 == 0 or completed == total:
+                            print(f"  进度: {completed}/{total} ({completed / total:.0%})")
 
-    if args.csv:
+                results.sort(key=lambda r: r.file_path)
+
+                if enable_cache:
+                    for r in results:
+                        if r.status == "success" and r.file_hash:
+                            cache["files"][r.file_path] = {
+                                "strategy": r.strategy_name,
+                                "file_hash": r.file_hash,
+                                "original_size": r.original_size,
+                                "compressed_size": r.compressed_size,
+                                "compression_ratio": r.compression_ratio,
+                                "strategy_signature": r.strategy_signature,
+                                "output_path": r.output_path,
+                                "timestamp": time.time(),
+                            }
+                        elif r.status == "skipped" and r.file_hash:
+                            if r.file_path in cache["files"]:
+                                cache["files"][r.file_path]["timestamp"] = time.time()
+
+                if enable_clean and entry_output:
+                    print("\n清理过期产物...")
+                    cache = clean_stale_products(
+                        source_root_abs, entry_output, images, cache, supported_ext
+                    )
+
+                if enable_cache:
+                    save_cache(cache_path, cache)
+
+                print_report(results)
+
+        default_report_file = args.report or general.get("report_file", "compression_report.json")
+        if len(entries) == 1 and entry.name == "default":
+            json_path = default_report_file
+            csv_path = args.csv
+            html_path = args.html
+        else:
+            base_dir = os.path.dirname(default_report_file) or "."
+            base_name = os.path.splitext(os.path.basename(default_report_file))[0]
+            json_path = os.path.join(base_dir, f"{entry_report_prefix}{base_name}.json")
+            csv_path = (os.path.join(os.path.dirname(args.csv),
+                                     f"{entry_report_prefix}{os.path.basename(args.csv)}")
+                        if args.csv else None)
+            html_path = (os.path.join(os.path.dirname(args.html),
+                                      f"{entry_report_prefix}{os.path.basename(args.html)}")
+                         if args.html else None)
+
         try:
-            save_csv_report(results, args.csv)
-            print(f"CSV 报告: {os.path.abspath(args.csv)}")
+            save_json_report(results, json_path, strategies)
+            print(f"\nJSON 报告: {os.path.abspath(json_path)}")
         except Exception as e:
-            print(f"[警告] CSV 报告导出失败: {e}")
-            report_write_errors.append(f"CSV报告: {e}")
+            print(f"\n[警告] JSON 报告导出失败: {e}")
+            report_write_errors.append(f"JSON报告: {e}")
 
-    if args.html:
-        try:
-            save_html_report(results, args.html, strategies)
-            print(f"HTML 报告: {os.path.abspath(args.html)}")
-        except Exception as e:
-            print(f"[警告] HTML 报告导出失败: {e}")
-            report_write_errors.append(f"HTML报告: {e}")
+        if csv_path:
+            try:
+                save_csv_report(results, csv_path)
+                print(f"CSV 报告: {os.path.abspath(csv_path)}")
+            except Exception as e:
+                print(f"[警告] CSV 报告导出失败: {e}")
+                report_write_errors.append(f"CSV报告: {e}")
 
-    manifest_path_final = None
-    if args.manifest:
-        manifest_path_arg = None if args.manifest == "__DEFAULT__" else args.manifest
-        manifest_path_final = get_manifest_path(config, args.output_dir, manifest_path_arg)
-        try:
-            save_manifest(results, manifest_path_final, source_root, args.output_dir)
-            print(f"Manifest: {os.path.abspath(manifest_path_final)}")
-        except Exception as e:
-            print(f"[警告] Manifest 导出失败: {e}")
-            report_write_errors.append(f"Manifest: {e}")
+        if html_path:
+            try:
+                save_html_report(results, html_path, strategies)
+                print(f"HTML 报告: {os.path.abspath(html_path)}")
+            except Exception as e:
+                print(f"[警告] HTML 报告导出失败: {e}")
+                report_write_errors.append(f"HTML报告: {e}")
 
-    if args.replace_preview:
-        mp = manifest_path_final or get_manifest_path(config, args.output_dir, None)
-        summary = replace_references_in_files(mp, args.replace_preview, preview=True)
-        print_replace_summary(summary, preview=True)
+        manifest_path_final = None
+        if args.manifest:
+            manifest_path_final = get_manifest_path(config, entry_output, entry_manifest_arg)
+            try:
+                save_manifest(results, manifest_path_final, source_root_abs, entry_output)
+                print(f"Manifest: {os.path.abspath(manifest_path_final)}")
+            except Exception as e:
+                print(f"[警告] Manifest 导出失败: {e}")
+                report_write_errors.append(f"Manifest: {e}")
 
-    if args.replace:
-        mp = manifest_path_final or get_manifest_path(config, args.output_dir, None)
-        summary = replace_references_in_files(mp, args.replace, preview=False)
-        print_replace_summary(summary, preview=False)
+        budget_check = check_budgets(results, budgets, source_root_abs)
+        print_budget_summary(budget_check)
 
-    print_ci_summary(results, source_root, args.output_dir)
+        return {
+            "entry": entry.name,
+            "results": results,
+            "report_write_errors": report_write_errors,
+            "manifest_path": manifest_path_final,
+            "source_root": source_root_abs,
+            "output_dir": entry_output,
+            "budget_check": budget_check,
+        }
 
-    exit_code = compute_exit_code(results, report_write_errors)
+    entry_results = []
+    for ent in entries:
+        if args.watch:
+            process_single_entry(ent)
+            return
+        ent_res = process_single_entry(ent)
+        entry_results.append(ent_res)
+
+    all_results = []
+    all_report_errors = []
+    all_manifests = []
+    all_source_roots = []
+    for er in entry_results:
+        all_results.extend(er["results"])
+        all_report_errors.extend(er.get("report_write_errors", []))
+        if er.get("manifest_path"):
+            all_manifests.append(er["manifest_path"])
+        if er.get("source_root"):
+            all_source_roots.append(er["source_root"])
+
+    if len(entry_results) > 1:
+        print(f"\n{'=' * 72}")
+        print(f"  [多入口汇总] 共 {len(entry_results)} 个入口")
+        for er in entry_results:
+            n_ok = sum(1 for r in er["results"] if r.status == "success")
+            n_skip = sum(1 for r in er["results"] if r.status == "skipped")
+            n_err = sum(1 for r in er["results"] if r.status == "error")
+            print(f"    - {er['entry']}: 成功 {n_ok} | 跳过 {n_skip} | 失败 {n_err}")
+        print(f"{'=' * 72}")
+
+    if args.replace_preview and all_manifests:
+        for mp in all_manifests:
+            summary = replace_references_in_files(mp, args.replace_preview, preview=True)
+            print_replace_summary(summary, preview=True)
+
+    if args.replace and all_manifests:
+        for mp in all_manifests:
+            summary = replace_references_in_files(mp, args.replace, preview=False)
+            print_replace_summary(summary, preview=False)
+
+    validate_issues_count = 0
+    if args.validate:
+        print(f"\n{'=' * 72}")
+        print("  [引用校验] 跨所有入口 manifest 检查")
+        print(f"{'=' * 72}")
+        for er in entry_results:
+            mp = er.get("manifest_path")
+            if not mp:
+                continue
+            print(f"\n入口 {er['entry']} ({os.path.basename(mp)}):")
+            vres = validate_references(mp, args.validate,
+                                        source_roots=all_source_roots)
+            print_validate_summary(vres)
+            if "summary" in vres and not vres["summary"]["passed"]:
+                validate_issues_count += (
+                    vres["summary"]["stale_source_refs"]
+                    + vres["summary"]["broken_links"]
+                )
+
+    if len(entry_results) == 1:
+        print_ci_summary(
+            entry_results[0]["results"],
+            entry_results[0]["source_root"],
+            entry_results[0]["output_dir"],
+        )
+    else:
+        print_ci_summary(all_results, "(多入口)", None)
+
+    total_budget_violations = sum(
+        len(er.get("budget_check", {}).get("violations", [])) for er in entry_results
+    )
+    budget_violations_for_exit = total_budget_violations if args.budget_strict else 0
+
+    exit_code = compute_exit_code(
+        all_results, all_report_errors,
+        budget_violations=budget_violations_for_exit,
+        reference_issues=validate_issues_count,
+    )
     if exit_code == EXIT_ALL_FAILED:
-        print(f"\n[构建失败] 所有 {len(results)} 张图片全部压缩失败，返回退出码 {EXIT_ALL_FAILED}")
+        print(f"\n[构建失败] 所有 {len(all_results)} 张图片全部压缩失败，"
+              f"返回退出码 {EXIT_ALL_FAILED}")
     elif exit_code == EXIT_REPORT_WRITE_FAILED:
-        print(f"\n[构建失败] 报告/Manifest 写入失败: {report_write_errors}，返回退出码 {EXIT_REPORT_WRITE_FAILED}")
+        print(f"\n[构建失败] 报告/Manifest 写入失败: {all_report_errors}，"
+              f"返回退出码 {EXIT_REPORT_WRITE_FAILED}")
+    elif exit_code == EXIT_BUDGET_EXCEEDED:
+        print(f"\n[构建失败] 体积预算超标 {total_budget_violations} 条，"
+              f"返回退出码 {EXIT_BUDGET_EXCEEDED}")
+    elif exit_code == EXIT_REFERENCE_VALIDATION_FAILED:
+        print(f"\n[构建失败] 引用校验失败（未替换/断链 {validate_issues_count} 处），"
+              f"返回退出码 {EXIT_REFERENCE_VALIDATION_FAILED}")
     elif exit_code != EXIT_OK:
         print(f"\n[构建失败] 返回退出码 {exit_code}")
     else:
-        success = sum(1 for r in results if r.status == "success")
-        skipped = sum(1 for r in results if r.status == "skipped")
-        errors = sum(1 for r in results if r.status == "error")
+        success = sum(1 for r in all_results if r.status == "success")
+        skipped = sum(1 for r in all_results if r.status == "skipped")
+        errors = sum(1 for r in all_results if r.status == "error")
         msg_parts = ["[构建完成]"]
         if success > 0:
             msg_parts.append(f"成功 {success}")
@@ -2043,6 +2549,10 @@ def main():
             msg_parts.append(f"跳过(增量) {skipped}")
         if errors > 0:
             msg_parts.append(f"部分失败 {errors}")
+        if total_budget_violations > 0 and not args.budget_strict:
+            msg_parts.append(f"预算告警 {total_budget_violations} 条(仅告警)")
+        if validate_issues_count > 0:
+            msg_parts.append(f"引用告警 {validate_issues_count} 处")
         print(f"\n{' | '.join(msg_parts)}，返回退出码 0")
     sys.exit(exit_code)
 
