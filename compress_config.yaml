@@ -1,0 +1,45 @@
+strategies:
+  - name: icon
+    description: "UI图标类图片 - 转为WebP保持清晰度"
+    path_pattern: "(icon|btn|button|logo|badge|avatar|tab|nav|menu|toolbar|icon_)" 
+    max_dimension: 64
+    format: webp
+    quality: 95
+    method: 6
+    preserve_exif: false
+
+  - name: photo
+    description: "照片类图片 - 高效压缩到原体积70%保留EXIF"
+    path_pattern: "(photo|img|image|pic|picture|gallery|photo_)"
+    min_dimension: 64
+    format: original
+    target_ratio: 0.70
+    quality_start: 85
+    quality_min: 50
+    preserve_exif: true
+
+  - name: auto_small
+    description: "自动识别的小尺寸图片 - 转WebP"
+    max_dimension: 64
+    format: webp
+    quality: 95
+    method: 6
+    preserve_exif: false
+
+  - name: auto_large
+    description: "自动识别的大尺寸图片 - 压缩保留EXIF"
+    min_dimension: 64
+    format: original
+    target_ratio: 0.70
+    quality_start: 85
+    quality_min: 50
+    preserve_exif: true
+
+general:
+  backup_dir: "_backup"
+  report_file: "compression_report.json"
+  workers: 0
+  supported_extensions:
+    - ".png"
+    - ".jpg"
+    - ".jpeg"

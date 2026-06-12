@@ -1,0 +1,56 @@
+# ===== 依赖目录 =====
+node_modules/
+bower_components/
+jspm_packages/
+.pnp/
+.yarn/
+vendor/
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+# ===== 构建 / 输出产物 =====
+dist/
+build/
+out/
+target/
+bin/
+obj/
+*.class
+*.o
+*.so
+*.dll
+*.exe
+# ===== 日志 / 临时文件 =====
+*.log
+logs/
+tmp/
+temp/
+.cache/
+*.tmp
+*.bak
+*.swp
+# ===== 环境变量 / 密钥 =====
+.env
+.env.*
+!.env.example
+*.local
+secrets.*
+# ===== IDE / 编辑器 =====
+.idea/
+.vscode/
+*.iml
+*.sublime-*
+# ===== 操作系统 =====
+.DS_Store
+Thumbs.db
+desktop.ini
