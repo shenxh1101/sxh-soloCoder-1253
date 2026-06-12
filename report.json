@@ -1,0 +1,289 @@
+{
+  "timestamp": "2026-06-13 01:38:35",
+  "summary": {
+    "total_files": 6,
+    "success": 6,
+    "skipped": 0,
+    "error": 0,
+    "total_original_size": 119857,
+    "total_compressed_size": 65826,
+    "total_saved": 54031,
+    "total_time_elapsed": 0.09690213203430176,
+    "overall_ratio": 0.5492,
+    "recompress_reasons": {
+      "config_changed": 0,
+      "source_changed": 0,
+      "output_missing": 0
+    }
+  },
+  "by_strategy": {
+    "icon": {
+      "count": 3,
+      "success": 3,
+      "skipped": 0,
+      "error": 0,
+      "original_size": 630,
+      "compressed_size": 1092,
+      "max_time": 0.04131603240966797,
+      "slowest_file": "D:\\code\\TraeProjects\\1253\\test_images\\icons\\icon_0.png",
+      "errors": [],
+      "saved": -462,
+      "ratio": 1.7333333333333334
+    },
+    "photo": {
+      "count": 3,
+      "success": 3,
+      "skipped": 0,
+      "error": 0,
+      "original_size": 119227,
+      "compressed_size": 64734,
+      "max_time": 0.0037097930908203125,
+      "slowest_file": "D:\\code\\TraeProjects\\1253\\test_images\\photos\\photo_0.jpg",
+      "errors": [],
+      "saved": 54493,
+      "ratio": 0.5429474867269998
+    }
+  },
+  "slowest_files": [
+    {
+      "file": "D:\\code\\TraeProjects\\1253\\test_images\\icons\\icon_0.png",
+      "strategy": "icon",
+      "time_elapsed": 0.041
+    },
+    {
+      "file": "D:\\code\\TraeProjects\\1253\\test_images\\icons\\icon_1.png",
+      "strategy": "icon",
+      "time_elapsed": 0.039
+    },
+    {
+      "file": "D:\\code\\TraeProjects\\1253\\test_images\\icons\\icon_2.png",
+      "strategy": "icon",
+      "time_elapsed": 0.006
+    },
+    {
+      "file": "D:\\code\\TraeProjects\\1253\\test_images\\photos\\photo_0.jpg",
+      "strategy": "photo",
+      "time_elapsed": 0.004
+    },
+    {
+      "file": "D:\\code\\TraeProjects\\1253\\test_images\\photos\\photo_1.jpg",
+      "strategy": "photo",
+      "time_elapsed": 0.004
+    }
+  ],
+  "errors": [],
+  "strategies_used": [
+    {
+      "name": "icon",
+      "description": "UI图标类图片 - 转为WebP保持清晰度",
+      "path_pattern": "(icon|btn|button|logo|badge|avatar|tab|nav|menu|toolbar|icon_)",
+      "max_dimension": 64,
+      "min_dimension": null,
+      "format": "webp",
+      "quality": 95,
+      "method": 6,
+      "target_ratio": null,
+      "quality_start": null,
+      "quality_min": 50,
+      "preserve_exif": false,
+      "signature": "c1bec57204172f18"
+    },
+    {
+      "name": "photo",
+      "description": "照片类图片 - 高效压缩到原体积70%保留EXIF",
+      "path_pattern": "(photo|img|image|pic|picture|gallery|photo_)",
+      "max_dimension": null,
+      "min_dimension": 64,
+      "format": "original",
+      "quality": 85,
+      "method": 4,
+      "target_ratio": 0.7,
+      "quality_start": 85,
+      "quality_min": 50,
+      "preserve_exif": true,
+      "signature": "0e4b734cdf868301"
+    },
+    {
+      "name": "auto_small",
+      "description": "自动识别的小尺寸图片 - 转WebP",
+      "path_pattern": null,
+      "max_dimension": 64,
+      "min_dimension": null,
+      "format": "webp",
+      "quality": 95,
+      "method": 6,
+      "target_ratio": null,
+      "quality_start": null,
+      "quality_min": 50,
+      "preserve_exif": false,
+      "signature": "68902dfb18f74a52"
+    },
+    {
+      "name": "auto_large",
+      "description": "自动识别的大尺寸图片 - 压缩保留EXIF",
+      "path_pattern": null,
+      "max_dimension": null,
+      "min_dimension": 64,
+      "format": "original",
+      "quality": 85,
+      "method": 4,
+      "target_ratio": 0.7,
+      "quality_start": 85,
+      "quality_min": 50,
+      "preserve_exif": true,
+      "signature": "7718e338c930fc9d"
+    }
+  ],
+  "details": [
+    {
+      "file": "D:\\code\\TraeProjects\\1253\\test_images\\icons\\icon_0.png",
+      "output": "dist-images\\icons\\icon_0.webp",
+      "backup": null,
+      "strategy": "icon",
+      "original_size": 210,
+      "compressed_size": 418,
+      "original_dimensions": [
+        32,
+        32
+      ],
+      "compressed_dimensions": [
+        32,
+        32
+      ],
+      "compression_ratio": 1.9905,
+      "time_elapsed": 0.041,
+      "status": "success",
+      "original_mtime": 1781285914.7765088,
+      "output_mtime": 1781285915.125152,
+      "file_hash": "8ee536e9c6ac7e60a48206d98b8c29a3641d3aedaa6c18019f6f24b9a8c8f690",
+      "strategy_signature": "c1bec57204172f18",
+      "recompress_reason": null,
+      "error": null
+    },
+    {
+      "file": "D:\\code\\TraeProjects\\1253\\test_images\\icons\\icon_1.png",
+      "output": "dist-images\\icons\\icon_1.webp",
+      "backup": null,
+      "strategy": "icon",
+      "original_size": 210,
+      "compressed_size": 324,
+      "original_dimensions": [
+        32,
+        32
+      ],
+      "compressed_dimensions": [
+        32,
+        32
+      ],
+      "compression_ratio": 1.5429,
+      "time_elapsed": 0.039,
+      "status": "success",
+      "original_mtime": 1781285914.7780175,
+      "output_mtime": 1781285915.1263244,
+      "file_hash": "e32d7261b82224c3e26ebf6f5e443cccc2ed5c4cff30ec9e13acd6f95c3a14b0",
+      "strategy_signature": "c1bec57204172f18",
+      "recompress_reason": null,
+      "error": null
+    },
+    {
+      "file": "D:\\code\\TraeProjects\\1253\\test_images\\icons\\icon_2.png",
+      "output": "dist-images\\icons\\icon_2.webp",
+      "backup": null,
+      "strategy": "icon",
+      "original_size": 210,
+      "compressed_size": 350,
+      "original_dimensions": [
+        32,
+        32
+      ],
+      "compressed_dimensions": [
+        32,
+        32
+      ],
+      "compression_ratio": 1.6667,
+      "time_elapsed": 0.006,
+      "status": "success",
+      "original_mtime": 1781285914.7785296,
+      "output_mtime": 1781285915.1326337,
+      "file_hash": "d22dfed75ebff036d6df0af636d94dc8506c00f090419ecec64a75139d06e41d",
+      "strategy_signature": "c1bec57204172f18",
+      "recompress_reason": null,
+      "error": null
+    },
+    {
+      "file": "D:\\code\\TraeProjects\\1253\\test_images\\photos\\photo_0.jpg",
+      "output": "dist-images\\photos\\photo_0.jpg",
+      "backup": null,
+      "strategy": "photo",
+      "original_size": 39764,
+      "compressed_size": 21695,
+      "original_dimensions": [
+        800,
+        600
+      ],
+      "compressed_dimensions": [
+        800,
+        600
+      ],
+      "compression_ratio": 0.5456,
+      "time_elapsed": 0.004,
+      "status": "success",
+      "original_mtime": 1781285914.7852962,
+      "output_mtime": 1781285915.1301205,
+      "file_hash": "cf724da6b083978b92d01455f749c33a25bedfb44b9948954b5167e415606826",
+      "strategy_signature": "0e4b734cdf868301",
+      "recompress_reason": null,
+      "error": null
+    },
+    {
+      "file": "D:\\code\\TraeProjects\\1253\\test_images\\photos\\photo_1.jpg",
+      "output": "dist-images\\photos\\photo_1.jpg",
+      "backup": null,
+      "strategy": "photo",
+      "original_size": 38075,
+      "compressed_size": 20602,
+      "original_dimensions": [
+        800,
+        600
+      ],
+      "compressed_dimensions": [
+        800,
+        600
+      ],
+      "compression_ratio": 0.5411,
+      "time_elapsed": 0.004,
+      "status": "success",
+      "original_mtime": 1781285914.787309,
+      "output_mtime": 1781285915.1346445,
+      "file_hash": "25e5e3ea78b0364d3255fb7f117f44a13a0040fb2b131c7757a06f3d5c78a8d8",
+      "strategy_signature": "0e4b734cdf868301",
+      "recompress_reason": null,
+      "error": null
+    },
+    {
+      "file": "D:\\code\\TraeProjects\\1253\\test_images\\photos\\photo_2.jpg",
+      "output": "dist-images\\photos\\photo_2.jpg",
+      "backup": null,
+      "strategy": "photo",
+      "original_size": 41388,
+      "compressed_size": 22437,
+      "original_dimensions": [
+        800,
+        600
+      ],
+      "compressed_dimensions": [
+        800,
+        600
+      ],
+      "compression_ratio": 0.5421,
+      "time_elapsed": 0.003,
+      "status": "success",
+      "original_mtime": 1781285914.788813,
+      "output_mtime": 1781285915.1361904,
+      "file_hash": "801524334a7d61722af601038ea4b6f3070a33d2a601186062cf354207b097e4",
+      "strategy_signature": "0e4b734cdf868301",
+      "recompress_reason": null,
+      "error": null
+    }
+  ]
+}

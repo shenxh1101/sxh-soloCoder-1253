@@ -1,4 +1,4 @@
-strategies:
+﻿strategies:
   - name: icon
     description: "UI图标类图片 - 转为WebP保持清晰度"
     path_pattern: "(icon|btn|button|logo|badge|avatar|tab|nav|menu|toolbar|icon_)" 

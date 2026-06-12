@@ -1,0 +1,7 @@
+﻿源文件,输出文件,备份路径,策略,原始大小(字节),压缩后大小(字节),原始尺寸,压缩后尺寸,压缩比,耗时(秒),状态,重新压缩原因,源文件哈希,错误
+D:\code\TraeProjects\1253\test_images\icons\icon_0.png,dist-images\icons\icon_0.webp,,icon,210,418,32x32,32x32,1.9905,0.041,success,,8ee536e9c6ac7e60a48206d98b8c29a3641d3aedaa6c18019f6f24b9a8c8f690,
+D:\code\TraeProjects\1253\test_images\icons\icon_1.png,dist-images\icons\icon_1.webp,,icon,210,324,32x32,32x32,1.5429,0.039,success,,e32d7261b82224c3e26ebf6f5e443cccc2ed5c4cff30ec9e13acd6f95c3a14b0,
+D:\code\TraeProjects\1253\test_images\icons\icon_2.png,dist-images\icons\icon_2.webp,,icon,210,350,32x32,32x32,1.6667,0.006,success,,d22dfed75ebff036d6df0af636d94dc8506c00f090419ecec64a75139d06e41d,
+D:\code\TraeProjects\1253\test_images\photos\photo_0.jpg,dist-images\photos\photo_0.jpg,,photo,39764,21695,800x600,800x600,0.5456,0.004,success,,cf724da6b083978b92d01455f749c33a25bedfb44b9948954b5167e415606826,
+D:\code\TraeProjects\1253\test_images\photos\photo_1.jpg,dist-images\photos\photo_1.jpg,,photo,38075,20602,800x600,800x600,0.5411,0.004,success,,25e5e3ea78b0364d3255fb7f117f44a13a0040fb2b131c7757a06f3d5c78a8d8,
+D:\code\TraeProjects\1253\test_images\photos\photo_2.jpg,dist-images\photos\photo_2.jpg,,photo,41388,22437,800x600,800x600,0.5421,0.003,success,,801524334a7d61722af601038ea4b6f3070a33d2a601186062cf354207b097e4,
